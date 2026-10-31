@@ -3,12 +3,42 @@ import google.generativeai as genai
 import folium
 from folium import plugins
 from streamlit_folium import st_folium
+import pandas as pd
 import os
 import json
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-st.set_page_config(page_title="Taktyka App", layout="wide")
-st.title("Encyklopedia Taktyczna i Symulator Analogii")
+st.set_page_config(page_title="System Odpraw Taktycznych C2", layout="wide")
+
+# Stylizacja na wojskowy panel sztabowy
+st.markdown("""
+<style>
+    .przelom-box {
+        background-color: #2b1d1d;
+        color: #f8f9fa;
+        padding: 20px;
+        border-left: 6px solid #ff4b4b;
+        border-radius: 6px;
+        margin-bottom: 20px;
+    }
+    .strona-a-box {
+        background-color: #162636;
+        color: #f8f9fa;
+        padding: 15px;
+        border-top: 4px solid #3b8ed0;
+        border-radius: 6px;
+    }
+    .strona-b-box {
+        background-color: #361616;
+        color: #f8f9fa;
+        padding: 15px;
+        border-top: 4px solid #e03c3c;
+        border-radius: 6px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🎖️ Sztabowy System Analiz Taktycznych i Symulator Analogii")
 
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
@@ -28,121 +58,71 @@ safety_settings = {
 def pobierz_dostepne_modele():
     try:
         wszystkie = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        preferowane = [m for m in wszystkie if 'flash' in m or 'pro' in m]
-        reszta = [m for m in wszystkie if m not in preferowane]
-        return preferowane + reszta
+        # Priorytet dla najnowszych modeli 2.5 Pro i Flash
+        priorytet = [m for m in wszystkie if '2.5-flash' in m or '2.5-pro' in m or '2.0-flash' in m]
+        reszta = [m for m in wszystkie if m not in priorytet and ('flash' in m or 'pro' in m)]
+        return priorytet + reszta
     except Exception:
-        return []
+        return ["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-flash-latest"]
 
-tab1, tab2 = st.tabs(["Encyklopedia i Mapy", "Porównywarka i Symulator"])
-
-with tab1:
-    st.header("Baza bitew historycznych")
-    modele_z_api = pobierz_dostepne_modele()
+def zbuduj_mape_taktyczna(faza_dane, punkt_przelomowy=None, pokaz_przelom=False):
+    c_lat = float(faza_dane.get("centrum_lat", 51.73))
+    c_lon = float(faza_dane.get("centrum_lon", 36.19))
     
-    bitwa = st.text_input("Wpisz nazwę bitwy (np. Bitwa pod Kurskiem, Operacja Market Garden):")
+    m = folium.Map(location=[c_lat, c_lon], zoom_start=9, tiles=None)
     
-    if st.button("Analizuj bitwę") and bitwa:
-        with st.spinner("AI analizuje przebieg taktyczny, wektory natarcia i przygotowuje animowaną mapę..."):
-            prompt = f"""Jako ekspert wojskowy, zrób zaawansowaną analizę taktyczną starcia: {bitwa}.
-            Zależy mi na precyzyjnej, chronologicznej osi czasu (godzina po godzinie lub faza po fazie).
-            Zwróć wynik WYŁĄCZNIE jako poprawny JSON o następującej strukturze (żadnego dodatkowego tekstu):
-            {{
-                "fazy": [
-                    {{
-                        "czas": "np. 04:30",
-                        "tytul": "Krótki tytuł manewru",
-                        "opis": "Dokładny opis taktyczny ruchów wojsk, wykorzystanego sprzętu i starć...",
-                        "lat": 51.73,
-                        "lon": 36.19
-                    }}
-                ]
-            }}
-            W polach lat i lon wpisz szerokość i długość geograficzną jako liczby. Wygeneruj od 4 do 7 kluczowych faz operacji z różnymi współrzędnymi geograficznymi, aby ukazać realny ruch wojsk na mapie."""
-            
-            lista_do_testu = modele_z_api if modele_z_api else ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-pro"]
-            dane = None
-            uzyty_model = ""
-            ostatni_blad = ""
-            
-            for nazwa_modelu in lista_do_testu:
-                try:
-                    model = genai.GenerativeModel(nazwa_modelu, safety_settings=safety_settings)
-                    response = model.generate_content(prompt)
-                    raw_text = response.text.strip()
-                    
-                    start = raw_text.find('{')
-                    end = raw_text.rfind('}') + 1
-                    if start != -1 and end != 0:
-                        raw_text = raw_text[start:end]
-                        
-                    dane = json.loads(raw_text)
-                    uzyty_model = nazwa_modelu
-                    break
-                except Exception as e:
-                    ostatni_blad = f"{nazwa_modelu} -> {str(e)}"
-                    continue
-            
-            if dane and "fazy" in dane:
-                st.session_state["wynik_dane"] = dane
-                st.session_state["wynik_model"] = uzyty_model
-                st.session_state["wynik_bitwa"] = bitwa
-                st.session_state["wynik_blad"] = None
-            else:
-                st.session_state["wynik_dane"] = None
-                st.session_state["wynik_blad"] = ostatni_blad or "Błędny format JSON."
+    # Darmowe podkłady Esri (brak wymogu klucza API, alfabet łaciński)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri Topo",
+        name="1. Mapa Sztabowa (Topograficzna - Łacińska)",
+        control=True
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri Dark",
+        name="2. Ciemna Mapa Dowodzenia (C2)",
+        control=True
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri Sat",
+        name="3. Zdjęcia Satelitarne Terenu",
+        control=True
+    ).add_to(m)
 
-    if st.session_state.get("wynik_blad"):
-        st.error("Wszystkie modele AI zawiodły lub zwróciły błędne dane.")
-        st.warning(f"Szczegóły: {st.session_state['wynik_blad']}")
-        
-    if st.session_state.get("wynik_dane"):
-        dane = st.session_state["wynik_dane"]
-        fazy = dane["fazy"]
-        st.success(f"Raport wygenerowany przez model: {st.session_state['wynik_model']}")
-        
-        # Inicjalizacja ciemnej mapy z pierwszej współrzędnej
-        start_lat = float(fazy[0]["lat"])
-        start_lon = float(fazy[0]["lon"])
-        m = folium.Map(location=[start_lat, start_lon], zoom_start=8, tiles="CartoDB dark_matter")
-        
-        punkty = []
-        col1, col2 = st.columns([1, 1.5]) # Lewa kolumna węższa (tekst), prawa szersza (mapa)
-        
-        with col1:
-            st.subheader(f"Przebieg operacji: {st.session_state['wynik_bitwa']}")
-            for i, faza in enumerate(fazy):
-                lat = float(faza["lat"])
-                lon = float(faza["lon"])
-                punkty.append([lat, lon])
-                
-                # Marker na mapie
-                folium.Marker(
-                    [lat, lon],
-                    popup=f"Faza {i+1}: {faza['tytul']}",
-                    tooltip=faza['czas'],
-                    icon=folium.Icon(color="red", icon="screenshot", prefix='glyphicon')
-                ).add_to(m)
-                
-                # Zapis na ekranie (oś czasu)
-                st.markdown(f"**[{faza['czas']}] - {faza['tytul']}**")
-                st.write(faza["opis"])
-                st.divider()
-                
-        with col2:
-            # Animowana ścieżka natarcia łącząca punkty
-            if len(punkty) > 1:
-                plugins.AntPath(
-                    locations=punkty, 
-                    dash_array=[10, 20], 
-                    color="red", 
-                    pulse_color="white",
-                    weight=4,
-                    opacity=0.8
-                ).add_to(m)
-                
-            st_folium(m, width=800, height=700)
+    wszystkie_wspolrzedne = [[c_lat, c_lon]]
 
-with tab2:
-    st.header("Symulator analogii taktycznych")
-    st.write("Moduł dodamy w kolejnym kroku, gdy opanujemy generowanie map!")
+    # Okrąg oznaczający główny rejon walk w danej fazie
+    promien_m = float(faza_dane.get("promien_walk_km", 15)) * 1000
+    folium.Circle(
+        location=[c_lat, c_lon],
+        radius=promien_m,
+        color="#ff9900",
+        weight=2,
+        fill=True,
+        fill_color="#ff9900",
+        fill_opacity=0.12,
+        tooltip=f"Rejon walk: {faza_dane.get('tytul', '')}"
+    ).add_to(m)
+
+    # Rysowanie wektorów natarcia i pozycji jednostek
+    for ruch in faza_dane.get("ruchy_wojsk", []):
+        s_lat = float(ruch.get("start_lat", c_lat))
+        s_lon = float(ruch.get("start_lon", c_lon))
+        cel_lat = float(ruch.get("cel_lat", c_lat))
+        cel_lon = float(ruch.get("cel_lon", c_lon))
+        
+        wszystkie_wspolrzedne.extend([[s_lat, s_lon], [cel_lat, cel_lon]])
+        
+        czy_strona_a = str(ruch.get("strona", "A")).upper() == "A"
+        kolor_linii = "#1f77b4" if czy_strona_a else "#d62728"
+        kolor_ikony = "blue" if czy_strona_a else "red"
+        etykieta_strony = "STRONA A (Niebiescy)" if czy_strona_a else "STRONA B (Czerwoni)"
+        
+        # Pozycja wyjściowa związku taktycznego
+        folium.Marker(
+            location=[s_lat, s_lon],
+            popup=folium.Popup(f"<b>{etykieta_strony}</b><br>Jednostka: {ruch.get('jednostka')}<br>Zadanie: {ruch.get('akcja')}", max_width=3
