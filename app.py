@@ -14,8 +14,14 @@ if not api_key:
     st.stop()
 
 genai.configure(api_key=api_key)
-# Zmieniona wersja modelu, która uniknie błędu 404
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+
+# Lista modeli od najlepszego do najbardziej niezawodnego "pewniaka"
+dostepne_modele = [
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-pro"
+]
 
 tab1, tab2 = st.tabs(["Encyklopedia i Mapy", "Porównywarka i Symulator"])
 
@@ -25,7 +31,7 @@ with tab1:
     
     if st.button("Analizuj bitwę"):
         if bitwa:
-            with st.spinner("AI analizuje archiwa i przygotowuje mapę..."):
+            with st.spinner("AI analizuje archiwa, sprawdza modele i przygotowuje mapę..."):
                 prompt = f"""Jako ekspert wojskowy, opisz bitwę: {bitwa}.
                 Zwróć wynik WYŁĄCZNIE jako poprawny JSON:
                 {{
@@ -33,18 +39,32 @@ with tab1:
                     "lat": szerokość_geograficzna_jako_liczba,
                     "lon": długość_geograficzna_jako_liczba
                 }}"""
-                try:
-                    response = model.generate_content(prompt)
-                    raw_text = response.text.strip().replace('```json', '').replace('```', '')
-                    dane = json.loads(raw_text)
-                    
+                
+                dane = None
+                uzyty_model = ""
+                
+                # Kaskada: próbujemy każdego modelu po kolei
+                for nazwa_modelu in dostepne_modele:
+                    try:
+                        model = genai.GenerativeModel(nazwa_modelu)
+                        response = model.generate_content(prompt)
+                        raw_text = response.text.strip().replace('```json', '').replace('```', '')
+                        dane = json.loads(raw_text)
+                        uzyty_model = nazwa_modelu
+                        break  # Jeśli się udało, przerywamy pętlę!
+                    except Exception:
+                        continue  # Jeśli jest błąd 404, idziemy cicho do kolejnego modelu na liście
+                
+                if dane:
+                    st.success(f"Udało się! Połączono przy użyciu modelu: {uzyty_model}")
                     st.write(dane["opis"])
                     
+                    # Generowanie mapy
                     m = folium.Map(location=[dane["lat"], dane["lon"]], zoom_start=9)
                     folium.Marker([dane["lat"], dane["lon"]], popup=bitwa, icon=folium.Icon(color="red", icon="info-sign")).add_to(m)
                     st_folium(m, width=800, height=400)
-                except Exception as e:
-                    st.error(f"Błąd analizy. Upewnij się, że bitwa istnieje. Detale: {e}")
+                else:
+                    st.error("Wszystkie modele AI z listy zawiodły. Sprawdź poprawność klucza API.")
 
 with tab2:
     st.header("Symulator analogii taktycznych")
