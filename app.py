@@ -8,14 +8,14 @@ import json
 st.set_page_config(page_title="Taktyka App", layout="wide")
 st.title("Encyklopedia Taktyczna i Symulator Analogii")
 
-# Pobieranie klucza z bezpiecznego środowiska serwera
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     st.error("Brak klucza API! Dodaj GEMINI_API_KEY w Portainerze.")
     st.stop()
 
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Zmieniona wersja modelu, która uniknie błędu 404
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 tab1, tab2 = st.tabs(["Encyklopedia i Mapy", "Porównywarka i Symulator"])
 
@@ -40,7 +40,6 @@ with tab1:
                     
                     st.write(dane["opis"])
                     
-                    # Rysowanie mapy
                     m = folium.Map(location=[dane["lat"], dane["lon"]], zoom_start=9)
                     folium.Marker([dane["lat"], dane["lon"]], popup=bitwa, icon=folium.Icon(color="red", icon="info-sign")).add_to(m)
                     st_folium(m, width=800, height=400)
